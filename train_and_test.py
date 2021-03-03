@@ -74,19 +74,19 @@ AUTOTUNE = tf.data.experimental.AUTOTUNE
 # Spec augment setting
 config_TimeWarp = {
     "TimeWarp": {
-        "W": 10 #移動量の最大値
+        "W": 5 #移動量の最大値
     }
 }
 config_FreqMask = {
     "FrequencyMask": {
-        "F": 30, # マスクの幅の最大値
+        "F": 20, # マスクの幅の最大値
         "num_masks": 1, # マスクをかける数
         "replace_with_zero": True # ゼロ埋めするか否か
     }
 }
 config_TimeMask = {
     "TimeMask": {
-        "T": 30, # マスクの幅の最大値
+        "T": 20, # マスクの幅の最大値
         "num_masks": 1, # マスクをかける数
         "replace_with_zero": True # ゼロ埋めするか否か
     }
@@ -123,6 +123,7 @@ mixup_config = {
 def augment_mixup(melspec_tensors, label_tensors):
     return mixup_from_tensor(melspec_tensors,
                              label_tensors,
+                             BATCH_SIZE=batch_size*extract_num,
                              ALPHA=mixup_config["ALPHA"],
                              PROBABILITY=mixup_config["PROBABILITY"],
                              CLASSES=mixup_config["CLASSES"])
@@ -191,6 +192,10 @@ def batch_flatten(melspecs, labels):
     return tf.reshape(melspecs, [shape[0]*shape[1], shape[2], shape[3]]), tf.reshape(labels, [shape[0]*shape[1], 1])
 
 
+def for_flat_map(melspecs, labels):
+    return tf.data.Dataset.zip(tf.data.Dataset.from_tensor_slices(melspecs), tf.data.Dataset.from_tensor_slices(labels))
+
+
 def create_dataset(file_paths, labels, sample_rate, extract_sec, extract_num):
     output_ds = tf.data.Dataset.zip((tf.data.Dataset.from_tensor_slices(file_paths), tf.data.Dataset.from_tensor_slices(labels)))
     output_ds = output_ds.map(lambda x, y: get_logmelspectrogram_and_label(x, y, sample_rate, extract_sec, extract_num), num_parallel_calls=AUTOTUNE)
@@ -198,6 +203,7 @@ def create_dataset(file_paths, labels, sample_rate, extract_sec, extract_num):
 
 
 cv_df = get_cv_df_from_yaml(yaml_path, output_csv_path=f"{output_dir}/cvset.csv")
+cv_df.loc[:, "_main_label_"] = cv_df.loc[:, "_main_label_"].astype("float32")
 n_splits = len(dict.fromkeys(cv_df["cvset"].values)) - 1
 
 result_df = pd.DataFrame({})
@@ -236,14 +242,15 @@ for cvset in range(1, n_splits+1):
     train_ds = train_ds.shuffle(buffer_size=len(base_ds_dict["train"]))
     train_ds = train_ds.map(lambda x, y: get_logmelspectrogram_and_label_random(x, y, sample_rate, window_sec, extract_num), num_parallel_calls=AUTOTUNE)
     if spec_augment_flag:
-        train_ds = train_ds.flat_map(lambda x: tf.data.Dataset.from_tensor_slices(x))
-        train_ds = train_ds.map(augment1, num_parallel_calls=AUTOTUNE)
+        train_ds = train_ds.flat_map(lambda x, y: tf.data.Dataset.zip((tf.data.Dataset.from_tensor_slices(x), tf.data.Dataset.from_tensor_slices(y))))
+        #train_ds = train_ds.map(augment1, num_parallel_calls=AUTOTUNE)
         train_ds = train_ds.map(augment2, num_parallel_calls=AUTOTUNE)
         train_ds = train_ds.map(augment3, num_parallel_calls=AUTOTUNE)
         train_ds = train_ds.batch(batch_size * extract_num)
         if mixup_flag:
             train_ds = train_ds.map(augment_mixup, num_parallel_calls=AUTOTUNE)
-        train_ds = train_ds.cache().prefetch(AUTOTUNE)
+        #train_ds = train_ds.cache().prefetch(AUTOTUNE)
+        train_ds = train_ds.prefetch(AUTOTUNE)
     else:
         train_ds = train_ds.batch(batch_size)
         train_ds = train_ds.map(batch_flatten, num_parallel_calls=AUTOTUNE)
@@ -338,7 +345,15 @@ for cvset in range(1, n_splits+1):
     y_scores_mean = np.array(y_scores_mean)
     y_scores_max = np.array(y_scores_max)
 
-    additional_condition = {"cvset": cvset}
+    additional_condition = {
+        "cvset": cvset,
+        "spec_augment": spec_augment_flag,
+        "mixup": mixup_flag,
+        "n_fft": n_fft,
+        "hop_length": hop_length,
+        "window_sec": window_sec,
+        "stride_sec": stride_sec,
+    }
     # 全ての結果
     y_true = test_labels
     additional_condition["sample_sumup"] = "all"

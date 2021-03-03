@@ -11,9 +11,7 @@ import tensorflow as tf
 #   [batch_size]: When using the label value as it is instead of one-hot-vector
 #   [batch_size, 1]: When using the probability value belonging to A when classifying two classes
 # output - a batch of images with mixup applied
-def mixup_from_tensor(images_tensor, labels_tensor, ALPHA=0.2, PROBABILITY=1.0, CLASSES=2):
-    BATCH_SIZE = tf.shape(images_tensor)[0]
-
+def mixup_from_tensor(images_tensor, labels_tensor, BATCH_SIZE=32, ALPHA=0.2, PROBABILITY=1.0, CLASSES=2):
     imgs = []
     labs = []
 
